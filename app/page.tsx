@@ -8,6 +8,7 @@ type SaveFile = {
   downloadUrl: string;
   size: number;
   uploadedAt: string;
+  description: string;
 };
 
 function formatSize(size: number) {
@@ -21,22 +22,24 @@ function fileNameFromPath(pathname: string) {
 }
 
 export default function Home() {
+  const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [description, setDescription] = useState('');
   const [files, setFiles] = useState<SaveFile[]>([]);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    const savedName = localStorage.getItem('my-upload-name');
     const savedPassword = localStorage.getItem('my-upload-password');
-    if (savedPassword) {
-      setPassword(savedPassword);
-    }
+    if (savedName) setName(savedName);
+    if (savedPassword) setPassword(savedPassword);
   }, []);
 
-  async function loadFiles(pw = password) {
-    if (!pw) {
-      setMessage('비밀번호 입력해라');
+  async function loadFiles(n = name, pw = password) {
+    if (!n || !pw) {
+      setMessage('이름과 비밀번호 입력해라');
       return;
     }
 
@@ -44,9 +47,10 @@ export default function Home() {
     setMessage('');
 
     try {
-      const res = await fetch(`/api/files?password=${encodeURIComponent(pw)}`, {
-        cache: 'no-store',
-      });
+      const res = await fetch(
+        `/api/files?name=${encodeURIComponent(n)}&password=${encodeURIComponent(pw)}`,
+        { cache: 'no-store' },
+      );
 
       const data = await res.json();
 
@@ -55,6 +59,7 @@ export default function Home() {
         return;
       }
 
+      localStorage.setItem('my-upload-name', n);
       localStorage.setItem('my-upload-password', pw);
       setFiles(data.files);
       setMessage(`파일 ${data.files.length}개 조회됨`);
@@ -69,8 +74,8 @@ export default function Home() {
   async function uploadFile(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
-    if (!password) {
-      setMessage('비밀번호 입력해라');
+    if (!name || !password) {
+      setMessage('이름과 비밀번호 입력해라');
       return;
     }
 
@@ -80,8 +85,10 @@ export default function Home() {
     }
 
     const formData = new FormData();
+    formData.append('name', name);
     formData.append('password', password);
     formData.append('file', selectedFile);
+    formData.append('description', description);
 
     setLoading(true);
     setMessage('업로드 중...');
@@ -100,8 +107,9 @@ export default function Home() {
       }
 
       setSelectedFile(null);
+      setDescription('');
       setMessage('업로드 완료');
-      await loadFiles(password);
+      await loadFiles(name, password);
     } catch (e) {
       console.error(e);
       setMessage('업로드 중 에러');
@@ -110,7 +118,7 @@ export default function Home() {
     }
   }
 
-  async function deleteFile(url: string) {
+  async function deleteFile(file: SaveFile) {
     const ok = confirm('진짜 삭제할거임?');
     if (!ok) return;
 
@@ -124,8 +132,10 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          name,
           password,
-          url,
+          url: file.url,
+          pathname: file.pathname,
         }),
       });
 
@@ -137,7 +147,7 @@ export default function Home() {
       }
 
       setMessage('삭제 완료');
-      await loadFiles(password);
+      await loadFiles(name, password);
     } catch (e) {
       console.error(e);
       setMessage('삭제 중 에러');
@@ -154,6 +164,15 @@ export default function Home() {
           어디서든 파일 올리고, 어디서든 다시 받는 나만의 저장소.
         </p>
 
+        <label className="label">이름</label>
+        <input
+          className="input"
+          type="text"
+          placeholder="이름"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+
         <label className="label">비밀번호</label>
         <input
           className="input"
@@ -169,6 +188,15 @@ export default function Home() {
             className="input"
             type="file"
             onChange={(e) => setSelectedFile(e.target.files?.[0] ?? null)}
+          />
+
+          <label className="label">설명 (선택)</label>
+          <input
+            className="input"
+            type="text"
+            placeholder="이 파일에 대한 설명"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
           />
 
           <button className="button" type="submit" disabled={loading}>
@@ -203,6 +231,7 @@ export default function Home() {
                     {formatSize(file.size)} ·{' '}
                     {new Date(file.uploadedAt).toLocaleString()}
                   </p>
+                  {file.description && <p>{file.description}</p>}
                 </div>
 
                 <div className="actions">
@@ -212,7 +241,7 @@ export default function Home() {
                   <button
                     className="danger"
                     type="button"
-                    onClick={() => deleteFile(file.url)}
+                    onClick={() => deleteFile(file)}
                     disabled={loading}
                   >
                     삭제

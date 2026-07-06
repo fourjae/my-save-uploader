@@ -1,22 +1,10 @@
 import { del, list, put } from '@vercel/blob';
-import { timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { accountPrefix, findAccount } from '@/lib/accounts';
 
 export const runtime = 'nodejs';
 
-const PREFIX = 'uploads/';
-
-function isPasswordCorrect(password: string) {
-  const expected = process.env.UPLOAD_PASSWORD ?? '';
-  const a = Buffer.from(password);
-  const b = Buffer.from(expected);
-
-  if (a.length !== b.length) {
-    return false;
-  }
-
-  return timingSafeEqual(a, b);
-}
+const META_SUFFIX = '.meta.json';
 
 function sanitizeFileName(name: string) {
   return name
@@ -31,33 +19,62 @@ function error(message: string, status = 400) {
 
 export async function GET(request: NextRequest) {
   try {
+    const name = request.nextUrl.searchParams.get('name');
     const password = request.nextUrl.searchParams.get('password');
 
-    if (!password) {
-      return error('비밀번호 입력해라', 401);
+    if (!name || !password) {
+      return error('이름과 비밀번호를 입력해라', 401);
     }
 
-    if (!isPasswordCorrect(password)) {
-      return error('비밀번호가 틀렸습니다', 401);
+    if (!findAccount(name, password)) {
+      return error('이름 또는 비밀번호가 틀렸습니다', 401);
     }
 
     const { blobs } = await list({
-      prefix: PREFIX,
-      limit: 100,
+      prefix: accountPrefix(name),
+      limit: 200,
     });
 
-    const files = blobs
-      .sort(
-        (a, b) =>
-          new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
-      )
-      .map((blob) => ({
-        pathname: blob.pathname,
-        url: blob.url,
-        downloadUrl: blob.downloadUrl,
-        size: blob.size,
-        uploadedAt: blob.uploadedAt,
-      }));
+    const metaByPathname = new Map(
+      blobs
+        .filter((b) => b.pathname.endsWith(META_SUFFIX))
+        .map((b) => [b.pathname, b]),
+    );
+
+    const fileBlobs = blobs.filter((b) => !b.pathname.endsWith(META_SUFFIX));
+
+    const files = await Promise.all(
+      fileBlobs
+        .sort(
+          (a, b) =>
+            new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
+        )
+        .map(async (blob) => {
+          const meta = metaByPathname.get(`${blob.pathname}${META_SUFFIX}`);
+          let description = '';
+
+          if (meta) {
+            try {
+              const res = await fetch(meta.url, { cache: 'no-store' });
+              const data = await res.json();
+              if (typeof data.description === 'string') {
+                description = data.description;
+              }
+            } catch (e) {
+              console.error(e);
+            }
+          }
+
+          return {
+            pathname: blob.pathname,
+            url: blob.url,
+            downloadUrl: blob.downloadUrl,
+            size: blob.size,
+            uploadedAt: blob.uploadedAt,
+            description,
+          };
+        }),
+    );
 
     return NextResponse.json({ files });
   } catch (e) {
@@ -70,15 +87,17 @@ export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
 
+    const name = formData.get('name');
     const password = formData.get('password');
     const file = formData.get('file');
+    const description = formData.get('description');
 
-    if (!password || typeof password !== 'string') {
-      return error('비밀번호 입력해라', 401);
+    if (typeof name !== 'string' || typeof password !== 'string' || !name || !password) {
+      return error('이름과 비밀번호를 입력해라', 401);
     }
 
-    if (!isPasswordCorrect(password)) {
-      return error('비밀번호가 틀렸습니다', 401);
+    if (!findAccount(name, password)) {
+      return error('이름 또는 비밀번호가 틀렸습니다', 401);
     }
 
     if (!(file instanceof File)) {
@@ -89,8 +108,8 @@ export async function POST(request: NextRequest) {
       return error('파일이 너무 큼. 4MB 이하만 업로드 가능', 413);
     }
 
-    const safeName = sanitizeFileName(file.name || 'save.dat');
-    const pathname = `${PREFIX}${Date.now()}-${safeName}`;
+    const safeName = sanitizeFileName(file.name || 'file');
+    const pathname = `${accountPrefix(name)}${Date.now()}-${safeName}`;
 
     const blob = await put(pathname, file, {
       access: 'public',
@@ -98,6 +117,20 @@ export async function POST(request: NextRequest) {
       allowOverwrite: false,
       cacheControlMaxAge: 60,
     });
+
+    if (typeof description === 'string' && description.trim()) {
+      await put(
+        `${pathname}${META_SUFFIX}`,
+        JSON.stringify({ description: description.trim().slice(0, 500) }),
+        {
+          access: 'public',
+          addRandomSuffix: false,
+          allowOverwrite: false,
+          contentType: 'application/json',
+          cacheControlMaxAge: 60,
+        },
+      );
+    }
 
     return NextResponse.json({ file: blob });
   } catch (e) {
@@ -109,25 +142,37 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json();
-    const { password, url } = body;
+    const { name, password, url, pathname } = body;
 
-    if (!password || typeof password !== 'string') {
-      return error('비밀번호 입력해라', 401);
+    if (typeof name !== 'string' || typeof password !== 'string' || !name || !password) {
+      return error('이름과 비밀번호를 입력해라', 401);
     }
 
-    if (!isPasswordCorrect(password)) {
-      return error('비밀번호가 틀렸습니다', 401);
+    if (!findAccount(name, password)) {
+      return error('이름 또는 비밀번호가 틀렸습니다', 401);
     }
 
     if (typeof url !== 'string' || !url) {
       return error('삭제할 파일 URL이 없음', 400);
     }
 
-    if (!url.includes(PREFIX)) {
+    const prefix = accountPrefix(name);
+    if (!url.includes(prefix)) {
       return error('권한 없음', 403);
     }
 
     await del(url);
+
+    if (typeof pathname === 'string' && pathname) {
+      const { blobs } = await list({
+        prefix: `${pathname}${META_SUFFIX}`,
+        limit: 1,
+      });
+
+      if (blobs[0]) {
+        await del(blobs[0].url);
+      }
+    }
 
     return NextResponse.json({ ok: true });
   } catch (e) {
