@@ -162,6 +162,8 @@ export default function Home() {
         <h1>나의 업로드 저장소</h1>
         <p className="sub">
           어디서든 파일 올리고, 어디서든 다시 받는 나만의 저장소.
+          <br />
+          처음 쓰는 이름이면 입력한 비밀번호로 자동으로 새 계정이 만들어집니다.
         </p>
 
         <label className="label">이름</label>

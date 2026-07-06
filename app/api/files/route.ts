@@ -1,6 +1,6 @@
 import { del, list, put } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
-import { accountPrefix, findAccount } from '@/lib/accounts';
+import { accountPrefix, loginOrRegister } from '@/lib/accounts';
 
 export const runtime = 'nodejs';
 
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
       return error('이름과 비밀번호를 입력해라', 401);
     }
 
-    if (!findAccount(name, password)) {
+    if (!(await loginOrRegister(name, password))) {
       return error('이름 또는 비밀번호가 틀렸습니다', 401);
     }
 
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
       return error('이름과 비밀번호를 입력해라', 401);
     }
 
-    if (!findAccount(name, password)) {
+    if (!(await loginOrRegister(name, password))) {
       return error('이름 또는 비밀번호가 틀렸습니다', 401);
     }
 
@@ -148,7 +148,7 @@ export async function DELETE(request: NextRequest) {
       return error('이름과 비밀번호를 입력해라', 401);
     }
 
-    if (!findAccount(name, password)) {
+    if (!(await loginOrRegister(name, password))) {
       return error('이름 또는 비밀번호가 틀렸습니다', 401);
     }
 

@@ -12,5 +12,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: '관리자 비밀번호가 틀렸습니다' }, { status: 401 });
   }
 
-  return NextResponse.json({ accounts: getAccounts() });
+  return NextResponse.json({ accounts: await getAccounts() });
 }

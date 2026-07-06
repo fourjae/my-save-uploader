@@ -1,3 +1,4 @@
+import { list, put } from '@vercel/blob';
 import { safeEqual } from './password';
 
 export type Account = {
@@ -5,15 +6,19 @@ export type Account = {
   password: string;
 };
 
-export function getAccounts(): Account[] {
-  const raw = process.env.USER_ACCOUNTS;
-  if (!raw) return [];
+const REGISTRY_PATHNAME = 'accounts/registry.json';
+
+async function loadRegistry(): Promise<Account[]> {
+  const { blobs } = await list({ prefix: REGISTRY_PATHNAME, limit: 1 });
+  const registryBlob = blobs[0];
+  if (!registryBlob) return [];
 
   try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
+    const res = await fetch(registryBlob.url, { cache: 'no-store' });
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
 
-    return parsed.filter(
+    return data.filter(
       (a): a is Account =>
         a && typeof a.name === 'string' && typeof a.password === 'string',
     );
@@ -22,10 +27,33 @@ export function getAccounts(): Account[] {
   }
 }
 
-export function findAccount(name: string, password: string): Account | null {
-  const account = getAccounts().find((a) => a.name === name);
-  if (!account) return null;
-  return safeEqual(password, account.password) ? account : null;
+async function saveRegistry(accounts: Account[]): Promise<void> {
+  await put(REGISTRY_PATHNAME, JSON.stringify(accounts), {
+    access: 'public',
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType: 'application/json',
+  });
+}
+
+export async function getAccounts(): Promise<Account[]> {
+  return loadRegistry();
+}
+
+export async function loginOrRegister(
+  name: string,
+  password: string,
+): Promise<Account | null> {
+  const accounts = await loadRegistry();
+  const existing = accounts.find((a) => a.name === name);
+
+  if (existing) {
+    return safeEqual(password, existing.password) ? existing : null;
+  }
+
+  const newAccount: Account = { name, password };
+  await saveRegistry([...accounts, newAccount]);
+  return newAccount;
 }
 
 export function accountPrefix(name: string) {
