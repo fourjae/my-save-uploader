@@ -1,12 +1,21 @@
 import { del, list, put } from '@vercel/blob';
-import { createHash } from 'crypto';
+import { timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
-function getUserPrefix(password: string) {
-  const hash = createHash('sha256').update(password).digest('hex').slice(0, 16);
-  return `ord-save/${hash}/`;
+const PREFIX = 'uploads/';
+
+function isPasswordCorrect(password: string) {
+  const expected = process.env.UPLOAD_PASSWORD ?? '';
+  const a = Buffer.from(password);
+  const b = Buffer.from(expected);
+
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  return timingSafeEqual(a, b);
 }
 
 function sanitizeFileName(name: string) {
@@ -28,10 +37,12 @@ export async function GET(request: NextRequest) {
       return error('비밀번호 입력해라', 401);
     }
 
-    const prefix = getUserPrefix(password);
+    if (!isPasswordCorrect(password)) {
+      return error('비밀번호가 틀렸습니다', 401);
+    }
 
     const { blobs } = await list({
-      prefix,
+      prefix: PREFIX,
       limit: 100,
     });
 
@@ -66,6 +77,10 @@ export async function POST(request: NextRequest) {
       return error('비밀번호 입력해라', 401);
     }
 
+    if (!isPasswordCorrect(password)) {
+      return error('비밀번호가 틀렸습니다', 401);
+    }
+
     if (!(file instanceof File)) {
       return error('파일이 없음', 400);
     }
@@ -74,9 +89,8 @@ export async function POST(request: NextRequest) {
       return error('파일이 너무 큼. 4MB 이하만 업로드 가능', 413);
     }
 
-    const prefix = getUserPrefix(password);
     const safeName = sanitizeFileName(file.name || 'save.dat');
-    const pathname = `${prefix}${Date.now()}-${safeName}`;
+    const pathname = `${PREFIX}${Date.now()}-${safeName}`;
 
     const blob = await put(pathname, file, {
       access: 'public',
@@ -101,12 +115,15 @@ export async function DELETE(request: NextRequest) {
       return error('비밀번호 입력해라', 401);
     }
 
+    if (!isPasswordCorrect(password)) {
+      return error('비밀번호가 틀렸습니다', 401);
+    }
+
     if (typeof url !== 'string' || !url) {
       return error('삭제할 파일 URL이 없음', 400);
     }
 
-    const prefix = getUserPrefix(password);
-    if (!url.includes(prefix)) {
+    if (!url.includes(PREFIX)) {
       return error('권한 없음', 403);
     }
 
