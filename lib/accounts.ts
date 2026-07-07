@@ -1,4 +1,4 @@
-import { list, put } from '@vercel/blob';
+import { get, put } from '@vercel/blob';
 import { safeEqual } from './password';
 
 export type Account = {
@@ -9,13 +9,12 @@ export type Account = {
 const REGISTRY_PATHNAME = 'accounts/registry.json';
 
 async function loadRegistry(): Promise<Account[]> {
-  const { blobs } = await list({ prefix: REGISTRY_PATHNAME, limit: 1 });
-  const registryBlob = blobs[0];
-  if (!registryBlob) return [];
+  const result = await get(REGISTRY_PATHNAME, { access: 'private' });
+  if (!result) return [];
 
   try {
-    const res = await fetch(registryBlob.url, { cache: 'no-store' });
-    const data = await res.json();
+    const text = await new Response(result.stream).text();
+    const data = JSON.parse(text);
     if (!Array.isArray(data)) return [];
 
     return data.filter(
@@ -29,7 +28,7 @@ async function loadRegistry(): Promise<Account[]> {
 
 async function saveRegistry(accounts: Account[]): Promise<void> {
   await put(REGISTRY_PATHNAME, JSON.stringify(accounts), {
-    access: 'public',
+    access: 'private',
     addRandomSuffix: false,
     allowOverwrite: true,
     contentType: 'application/json',

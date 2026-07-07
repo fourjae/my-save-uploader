@@ -1,4 +1,4 @@
-import { del, list, put } from '@vercel/blob';
+import { del, get, list, put } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
 import { accountPrefix, loginOrRegister } from '@/lib/accounts';
 
@@ -35,10 +35,8 @@ export async function GET(request: NextRequest) {
       limit: 200,
     });
 
-    const metaByPathname = new Map(
-      blobs
-        .filter((b) => b.pathname.endsWith(META_SUFFIX))
-        .map((b) => [b.pathname, b]),
+    const metaPathnames = new Set(
+      blobs.filter((b) => b.pathname.endsWith(META_SUFFIX)).map((b) => b.pathname),
     );
 
     const fileBlobs = blobs.filter((b) => !b.pathname.endsWith(META_SUFFIX));
@@ -50,15 +48,17 @@ export async function GET(request: NextRequest) {
             new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime(),
         )
         .map(async (blob) => {
-          const meta = metaByPathname.get(`${blob.pathname}${META_SUFFIX}`);
           let description = '';
+          const metaPathname = `${blob.pathname}${META_SUFFIX}`;
 
-          if (meta) {
+          if (metaPathnames.has(metaPathname)) {
             try {
-              const res = await fetch(meta.url, { cache: 'no-store' });
-              const data = await res.json();
-              if (typeof data.description === 'string') {
-                description = data.description;
+              const meta = await get(metaPathname, { access: 'private' });
+              if (meta) {
+                const data = JSON.parse(await new Response(meta.stream).text());
+                if (typeof data.description === 'string') {
+                  description = data.description;
+                }
               }
             } catch (e) {
               console.error(e);
@@ -67,8 +67,6 @@ export async function GET(request: NextRequest) {
 
           return {
             pathname: blob.pathname,
-            url: blob.url,
-            downloadUrl: blob.downloadUrl,
             size: blob.size,
             uploadedAt: blob.uploadedAt,
             description,
@@ -112,10 +110,9 @@ export async function POST(request: NextRequest) {
     const pathname = `${accountPrefix(name)}${Date.now()}-${safeName}`;
 
     const blob = await put(pathname, file, {
-      access: 'public',
+      access: 'private',
       addRandomSuffix: false,
       allowOverwrite: false,
-      cacheControlMaxAge: 60,
     });
 
     if (typeof description === 'string' && description.trim()) {
@@ -123,16 +120,15 @@ export async function POST(request: NextRequest) {
         `${pathname}${META_SUFFIX}`,
         JSON.stringify({ description: description.trim().slice(0, 500) }),
         {
-          access: 'public',
+          access: 'private',
           addRandomSuffix: false,
           allowOverwrite: false,
           contentType: 'application/json',
-          cacheControlMaxAge: 60,
         },
       );
     }
 
-    return NextResponse.json({ file: blob });
+    return NextResponse.json({ file: { pathname: blob.pathname } });
   } catch (e) {
     console.error(e);
     return error('업로드 실패', 500);
@@ -142,7 +138,7 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, password, url, pathname } = body;
+    const { name, password, pathname } = body;
 
     if (typeof name !== 'string' || typeof password !== 'string' || !name || !password) {
       return error('이름과 비밀번호를 입력해라', 401);
@@ -152,27 +148,15 @@ export async function DELETE(request: NextRequest) {
       return error('이름 또는 비밀번호가 틀렸습니다', 401);
     }
 
-    if (typeof url !== 'string' || !url) {
-      return error('삭제할 파일 URL이 없음', 400);
+    if (typeof pathname !== 'string' || !pathname) {
+      return error('삭제할 파일이 없음', 400);
     }
 
-    const prefix = accountPrefix(name);
-    if (!url.includes(prefix)) {
+    if (!pathname.startsWith(accountPrefix(name))) {
       return error('권한 없음', 403);
     }
 
-    await del(url);
-
-    if (typeof pathname === 'string' && pathname) {
-      const { blobs } = await list({
-        prefix: `${pathname}${META_SUFFIX}`,
-        limit: 1,
-      });
-
-      if (blobs[0]) {
-        await del(blobs[0].url);
-      }
-    }
+    await del([pathname, `${pathname}${META_SUFFIX}`]);
 
     return NextResponse.json({ ok: true });
   } catch (e) {

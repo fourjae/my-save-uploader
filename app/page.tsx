@@ -4,8 +4,6 @@ import { FormEvent, useEffect, useState } from 'react';
 
 type SaveFile = {
   pathname: string;
-  url: string;
-  downloadUrl: string;
   size: number;
   uploadedAt: string;
   description: string;
@@ -134,7 +132,6 @@ export default function Home() {
         body: JSON.stringify({
           name,
           password,
-          url: file.url,
           pathname: file.pathname,
         }),
       });
@@ -226,7 +223,7 @@ export default function Home() {
         ) : (
           <ul className="fileList">
             {files.map((file) => (
-              <li key={file.url} className="fileItem">
+              <li key={file.pathname} className="fileItem">
                 <div>
                   <strong>{fileNameFromPath(file.pathname)}</strong>
                   <p>
@@ -237,7 +234,10 @@ export default function Home() {
                 </div>
 
                 <div className="actions">
-                  <a className="linkButton" href={file.downloadUrl}>
+                  <a
+                    className="linkButton"
+                    href={`/api/download?name=${encodeURIComponent(name)}&password=${encodeURIComponent(password)}&pathname=${encodeURIComponent(file.pathname)}`}
+                  >
                     다운로드
                   </a>
                   <button
