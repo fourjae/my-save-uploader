@@ -24,8 +24,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: '권한 없음' }, { status: 403 });
     }
 
+    // delegation에 pathname을 넣으면 서버가 %문자를 디코딩해 저장해서
+    // 한글 계정 경로와 불일치(403)함. 와일드카드로 발급하되 실제 서명은
+    // 아래 presignUrl에서 정확한 pathname에 고정되므로 클라이언트는
+    // 다른 경로에 업로드할 수 없음(clientSigningToken은 서버 밖으로 안 나감).
     const signedToken = await issueSignedToken({
-      pathname,
+      pathname: '*',
       operations: ['put'],
       maximumSizeInBytes: MAX_FILE_SIZE,
       validUntil: Date.now() + 10 * 60 * 1000,
