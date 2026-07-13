@@ -6,13 +6,6 @@ export const runtime = 'nodejs';
 
 const META_SUFFIX = '.meta.json';
 
-function sanitizeFileName(name: string) {
-  return name
-    .replace(/[\\/]/g, '_')
-    .replace(/[^a-zA-Z0-9._가-힣-]/g, '_')
-    .slice(0, 120);
-}
-
 function error(message: string, status = 400) {
   return NextResponse.json({ message }, { status });
 }
@@ -84,14 +77,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// 파일 본체는 /api/upload(클라이언트 업로드)로 올라가고, 여기선 설명 메타만 저장
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
-
-    const name = formData.get('name');
-    const password = formData.get('password');
-    const file = formData.get('file');
-    const description = formData.get('description');
+    const body = await request.json();
+    const { name, password, pathname, description } = body;
 
     if (typeof name !== 'string' || typeof password !== 'string' || !name || !password) {
       return error('이름과 비밀번호를 입력해라', 401);
@@ -101,40 +91,29 @@ export async function POST(request: NextRequest) {
       return error('이름 또는 비밀번호가 틀렸습니다', 401);
     }
 
-    if (!(file instanceof File)) {
-      return error('파일이 없음', 400);
+    if (typeof pathname !== 'string' || !pathname.startsWith(accountPrefix(name))) {
+      return error('권한 없음', 403);
     }
 
-    if (file.size > 4 * 1024 * 1024) {
-      return error('파일이 너무 큼. 4MB 이하만 업로드 가능', 413);
+    if (typeof description !== 'string' || !description.trim()) {
+      return NextResponse.json({ ok: true });
     }
 
-    const safeName = sanitizeFileName(file.name || 'file');
-    const pathname = `${accountPrefix(name)}${Date.now()}-${safeName}`;
+    await put(
+      `${pathname}${META_SUFFIX}`,
+      JSON.stringify({ description: description.trim().slice(0, 500) }),
+      {
+        access: 'private',
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType: 'application/json',
+      },
+    );
 
-    const blob = await put(pathname, file, {
-      access: 'private',
-      addRandomSuffix: false,
-      allowOverwrite: false,
-    });
-
-    if (typeof description === 'string' && description.trim()) {
-      await put(
-        `${pathname}${META_SUFFIX}`,
-        JSON.stringify({ description: description.trim().slice(0, 500) }),
-        {
-          access: 'private',
-          addRandomSuffix: false,
-          allowOverwrite: false,
-          contentType: 'application/json',
-        },
-      );
-    }
-
-    return NextResponse.json({ file: { pathname: blob.pathname } });
+    return NextResponse.json({ ok: true });
   } catch (e) {
     console.error(e);
-    return error('업로드 실패', 500);
+    return error('설명 저장 실패', 500);
   }
 }
 

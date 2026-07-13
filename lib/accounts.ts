@@ -1,6 +1,8 @@
 import { get, put } from '@vercel/blob';
 import { safeEqual } from './password';
 
+export { accountPrefix } from './paths';
+
 export type Account = {
   name: string;
   password: string;
@@ -53,8 +55,4 @@ export async function loginOrRegister(
   const newAccount: Account = { name, password };
   await saveRegistry([...accounts, newAccount]);
   return newAccount;
-}
-
-export function accountPrefix(name: string) {
-  return `uploads/${encodeURIComponent(name)}/`;
 }

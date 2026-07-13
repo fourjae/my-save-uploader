@@ -1,6 +1,8 @@
 'use client';
 
+import { upload } from '@vercel/blob/client';
 import { FormEvent, useEffect, useState } from 'react';
+import { MAX_FILE_SIZE, accountPrefix, sanitizeFileName } from '@/lib/paths';
 
 type SaveFile = {
   pathname: string;
@@ -82,26 +84,37 @@ export default function Home() {
       return;
     }
 
-    const formData = new FormData();
-    formData.append('name', name);
-    formData.append('password', password);
-    formData.append('file', selectedFile);
-    formData.append('description', description);
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      setMessage('파일이 너무 큼. 100MB 이하만 업로드 가능');
+      return;
+    }
 
     setLoading(true);
-    setMessage('업로드 중...');
+    setMessage('업로드 중... 0%');
 
     try {
-      const res = await fetch('/api/files', {
-        method: 'POST',
-        body: formData,
+      const pathname = `${accountPrefix(name)}${Date.now()}-${sanitizeFileName(selectedFile.name || 'file')}`;
+
+      const blob = await upload(pathname, selectedFile, {
+        access: 'private',
+        handleUploadUrl: '/api/upload',
+        clientPayload: JSON.stringify({ name, password }),
+        multipart: selectedFile.size > 10 * 1024 * 1024,
+        onUploadProgress: ({ percentage }) =>
+          setMessage(`업로드 중... ${percentage}%`),
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setMessage(data.message || '업로드 실패');
-        return;
+      if (description.trim()) {
+        await fetch('/api/files', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            password,
+            pathname: blob.pathname,
+            description,
+          }),
+        });
       }
 
       setSelectedFile(null);
@@ -110,7 +123,7 @@ export default function Home() {
       await loadFiles(name, password);
     } catch (e) {
       console.error(e);
-      setMessage('업로드 중 에러');
+      setMessage(e instanceof Error && e.message ? e.message : '업로드 중 에러');
     } finally {
       setLoading(false);
     }
@@ -182,7 +195,7 @@ export default function Home() {
         />
 
         <form onSubmit={uploadFile} className="uploadBox">
-          <label className="label">업로드 파일</label>
+          <label className="label">업로드 파일 (최대 100MB)</label>
           <input
             className="input"
             type="file"
