@@ -53,7 +53,10 @@ export async function GET(request: NextRequest) {
 
           if (metaPathnames.has(metaPathname)) {
             try {
-              const meta = await get(metaPathname, { access: 'private' });
+              const meta = await get(
+                metaPathname.split('/').map(encodeURIComponent).join('/'),
+                { access: 'private' },
+              );
               if (meta) {
                 const data = JSON.parse(await new Response(meta.stream).text());
                 if (typeof data.description === 'string') {

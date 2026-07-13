@@ -22,7 +22,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: '권한 없음' }, { status: 403 });
     }
 
-    const result = await get(pathname, { access: 'private' });
+    // put()은 pathname을 인코딩해 전송하지만 get()은 URL에 그대로 이어붙이므로,
+    // 저장된 경로와 일치하려면 세그먼트별로 한 번 더 인코딩해야 함
+    const encodedPathname = pathname.split('/').map(encodeURIComponent).join('/');
+    const result = await get(encodedPathname, { access: 'private' });
 
     if (!result) {
       return NextResponse.json({ message: '파일이 없음' }, { status: 404 });
