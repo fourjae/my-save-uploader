@@ -1,51 +1,48 @@
-import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
+import { issueSignedToken, presignUrl } from '@vercel/blob';
 import { NextRequest, NextResponse } from 'next/server';
 import { accountPrefix, loginOrRegister } from '@/lib/accounts';
 import { MAX_FILE_SIZE } from '@/lib/paths';
 
 export const runtime = 'nodejs';
 
+// 파일 본체가 서버 함수를 거치지 않도록, 인증 후 10분짜리
+// 업로드 전용 presigned URL을 발급한다 (OIDC 인증이라 RW 토큰 불필요)
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as HandleUploadBody;
+    const body = await request.json();
+    const { name, password, pathname } = body;
 
-    const result = await handleUpload({
-      request,
-      body,
-      onBeforeGenerateToken: async (pathname, clientPayload) => {
-        let name = '';
-        let password = '';
+    if (typeof name !== 'string' || typeof password !== 'string' || !name || !password) {
+      return NextResponse.json({ message: '이름과 비밀번호를 입력해라' }, { status: 401 });
+    }
 
-        try {
-          const data = JSON.parse(clientPayload ?? '{}');
-          if (typeof data.name === 'string') name = data.name;
-          if (typeof data.password === 'string') password = data.password;
-        } catch {
-          // 파싱 실패 시 아래 인증에서 걸러짐
-        }
+    if (!(await loginOrRegister(name, password))) {
+      return NextResponse.json({ message: '이름 또는 비밀번호가 틀렸습니다' }, { status: 401 });
+    }
 
-        if (!name || !password || !(await loginOrRegister(name, password))) {
-          throw new Error('이름 또는 비밀번호가 틀렸습니다');
-        }
+    if (typeof pathname !== 'string' || !pathname.startsWith(accountPrefix(name))) {
+      return NextResponse.json({ message: '권한 없음' }, { status: 403 });
+    }
 
-        if (!pathname.startsWith(accountPrefix(name))) {
-          throw new Error('권한 없음');
-        }
-
-        return {
-          maximumSizeInBytes: MAX_FILE_SIZE,
-          addRandomSuffix: false,
-          allowOverwrite: false,
-        };
-      },
+    const signedToken = await issueSignedToken({
+      pathname,
+      operations: ['put'],
+      maximumSizeInBytes: MAX_FILE_SIZE,
+      validUntil: Date.now() + 10 * 60 * 1000,
     });
 
-    return NextResponse.json(result);
+    const { presignedUrl } = await presignUrl(signedToken, {
+      operation: 'put',
+      pathname,
+      access: 'private',
+      maximumSizeInBytes: MAX_FILE_SIZE,
+      addRandomSuffix: false,
+      allowOverwrite: false,
+    });
+
+    return NextResponse.json({ presignedUrl });
   } catch (e) {
     console.error(e);
-    return NextResponse.json(
-      { message: e instanceof Error ? e.message : '업로드 실패' },
-      { status: 400 },
-    );
+    return NextResponse.json({ message: '업로드 준비 실패' }, { status: 500 });
   }
 }

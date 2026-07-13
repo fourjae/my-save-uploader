@@ -1,6 +1,5 @@
 'use client';
 
-import { upload } from '@vercel/blob/client';
 import { FormEvent, useEffect, useState } from 'react';
 import { MAX_FILE_SIZE, accountPrefix, sanitizeFileName } from '@/lib/paths';
 
@@ -19,6 +18,28 @@ function formatSize(size: number) {
 
 function fileNameFromPath(pathname: string) {
   return pathname.split('/').pop() ?? pathname;
+}
+
+function putWithProgress(
+  url: string,
+  file: File,
+  onProgress: (percentage: number) => void,
+) {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`업로드 실패 (${xhr.status})`));
+    xhr.onerror = () => reject(new Error('업로드 중 네트워크 에러'));
+    xhr.send(file);
+  });
 }
 
 export default function Home() {
@@ -95,14 +116,22 @@ export default function Home() {
     try {
       const pathname = `${accountPrefix(name)}${Date.now()}-${sanitizeFileName(selectedFile.name || 'file')}`;
 
-      const blob = await upload(pathname, selectedFile, {
-        access: 'private',
-        handleUploadUrl: '/api/upload',
-        clientPayload: JSON.stringify({ name, password }),
-        multipart: selectedFile.size > 10 * 1024 * 1024,
-        onUploadProgress: ({ percentage }) =>
-          setMessage(`업로드 중... ${percentage}%`),
+      const presignRes = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, password, pathname }),
       });
+
+      const presignData = await presignRes.json();
+
+      if (!presignRes.ok) {
+        setMessage(presignData.message || '업로드 실패');
+        return;
+      }
+
+      await putWithProgress(presignData.presignedUrl, selectedFile, (pct) =>
+        setMessage(`업로드 중... ${pct}%`),
+      );
 
       if (description.trim()) {
         await fetch('/api/files', {
@@ -111,7 +140,7 @@ export default function Home() {
           body: JSON.stringify({
             name,
             password,
-            pathname: blob.pathname,
+            pathname,
             description,
           }),
         });
